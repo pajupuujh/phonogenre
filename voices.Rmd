@@ -1,0 +1,368 @@
+---
+title: "Voice pleasantness"
+author: "Hille"
+date: "March 14, 2017"
+output: 
+  html_document:
+    dev: png
+    fig_height: 6
+---
+
+```{r prepare, include=FALSE}
+require(pryr)
+require(plyr)
+require(GGally)
+require(ggplot2)
+require(RColorBrewer)
+require(psych)
+
+options("width"=200)
+
+```
+## Data
+
+Read the speaker scores: 
+
+*  __speaker.gender__ speaker gender: __F__ female,  __M__ male
+*  __speaker__ speaker voice sample nr in the test
+*  __rater__ rater id
+*  __gender__ rater gender
+*  __age__ rater age
+*  __score__ rater score
+
+```{r}
+
+scores = read.csv("scores.csv")
+scores.f=scores[scores$speaker.gender=="F",]
+scores.m=scores[scores$speaker.gender=="M",]
+
+```
+
+Read the GeMAPS parameters of the voice samples:
+
+*  __speaker.gender__ speaker gender: __F__ female,  __M__ male
+*  __speaker__ speaker voice sample nr in the test
+*  __speaker.age__ speaker age
+*  __phonogenre__
+*  __GeMAPS__ the GeMAPS parameters
+
+```{r}
+
+voices = read.csv("voices.csv")
+gemaps.start=5
+
+```
+
+## Intraclass Correlation Coefficient
+
+Calculate the ICC for the different rater groups.
+
+Select the female and male voices separately and create the data frames where the scores for each voice are in one row.
+```{r ICC_1}
+
+ids = c("speaker.gender","rater","gender","age")
+xf = reshape(scores.f, idvar=ids, timevar = "speaker", direction="wide")
+xm = reshape(scores.m, idvar=ids, timevar = "speaker", direction="wide")
+
+```
+
+Calculate __Intraclass Correlation Coefficient__ (ICC) for different groups:
+```{r ICC_2}
+
+subsets = c( 'T',
+  'age=="Y"', 'age=="A"', 'gender=="M"','gender=="F"',
+  'gender=="M" & age=="Y"', 'gender=="M" & age=="A"',
+  'gender=="F" & age=="Y"','gender=="F" & age=="A"'
+)
+
+icc2k = function(data, sub ) {
+  i = ICC(
+    t(subset(data, subset=eval(parse(text=sub)),select=c(-1:-4))),
+    missing = F)$results[5,]
+  data.frame(subset=sub, ICC=i$ICC, F=i$F, p=i$p)
+}
+```
+### Female speakers
+```{r}
+print(ldply(subsets, icc2k, data=xf))
+```
+### Male speakers
+```{r}
+print(ldply(subsets, icc2k, data=xm))
+
+```
+
+
+
+## Speaker score for the `phonogenre` groups
+
+Print the boxplot of the __score__ grouped by __phonogenre__. 
+```{r phonogenre_mean}
+
+x = merge( scores, voices[c("speaker.gender","speaker","phonogenre")], by=c("speaker.gender","speaker"))
+
+print(ggplot(x, aes(x=phonogenre, y=score, fill=phonogenre)) +
+  geom_boxplot(notch=TRUE, width=.5) + 
+  guides(fill=FALSE)+
+  theme(axis.text = element_text(size=rel(1.5)))+
+  theme(axis.title=element_text(size=rel(1.5), face="bold", colour="black"))
+)
+
+print( oneway.test(score ~ phonogenre, data=x))
+```
+
+
+
+## Two sample t.test for the female and male raters
+
+Compare the male and female rater group scores for the female and male speakers with the t.test
+
+```{r female M / F}
+
+ttest = function( speaker.in, data)  {
+  tt = t.test(
+    subset(data, gender=="M" & speaker==speaker.in, select=c("score")),
+    subset(data, gender=="F" & speaker==speaker.in, select=c("score"))
+  )
+  data.frame(statistic = tt$statistic, p.value = tt$p.value, parameter = tt$parameter)
+}
+print(ldply(1:50, ttest, data=scores.f))
+print(ldply(1:60, ttest, data=scores.m))
+
+```
+
+## Two sample t.test for the male and female speakers
+
+Calculate the mean score of the female and male voice samples for each rater 
+and compare the female and male speaker scores with the paired
+and the independent __two sample t.test__.
+```{r}
+x = aggregate(score ~ speaker.gender+rater, scores, FUN=mean)
+
+x1 = merge(x[x$speaker.gender=="F",], x[x$speaker.gender=="M",], by="rater" )
+names(x1) = c("rater","speaker.female","score.female","speaker.male","score.male")
+t.test( x1$score.female, x1$score.male, paired=TRUE)
+
+t.test( x1$score.female, x1$score.male)
+```
+### Boxplot
+```{r}
+print(ggplot(x, aes(x=speaker.gender, y=score, fill=speaker.gender)) +
+  geom_boxplot(notch=TRUE, width=.33) + 
+  xlab("speaker gender")+
+  guides(fill=FALSE)+
+  scale_x_discrete(labels=c("female speaker", "male speaker"))+
+  theme(axis.text = element_text(size=rel(1.5)))+
+  theme(axis.title = element_text(size=rel(1.5), face="bold", colour="black"))
+)
+```
+
+## Speaker age correlation to the score
+
+```{r}
+
+x = merge(scores,voices[c("speaker.gender","speaker","speaker.age")],by=c("speaker.gender","speaker"))
+x.f = x[x$speaker.gender=="F",]
+x.m = x[x$speaker.gender=="M",]
+
+cor.test(x$score, x$speaker.age)
+cor.test(x.f$score, x.f$speaker.age)
+cor.test(x.m$score, x.m$speaker.age)
+```
+
+### Plot the average score for all the speaker age groups
+
+```{r}
+x = aggregate(score ~ speaker.gender + speaker.age, data=x, FUN = mean )
+print(
+  ggplot(x,aes(x=speaker.age, y=score, color=speaker.gender))+
+  geom_point(size=3)+
+  stat_smooth(method = lm)+
+  xlab("speaker age")+
+  guides(color=guide_legend(title="Speaker"))+
+  scale_colour_discrete(labels=c("female", "male"))+
+  theme(legend.position = c(1,1), 
+        legend.justification = c(1,1), 
+        legend.background = element_blank(), 
+        legend.key = element_blank())+
+  theme(legend.title=element_text(size=rel(1.5), face="bold"))+
+  theme(legend.text=element_text(size=rel(1.5)))+
+  theme(axis.text = element_text(size=rel(1.5)))+
+  theme(axis.title=element_text(size=rel(1.5), face="bold", colour="black"))
+)
+
+```
+
+## Rater age and gender effect on the score
+
+Calculate the average score of all the voice samples for all the groups and plot them.
+
+```{r aggregate_score}
+
+da = aggregate(score ~ speaker.gender+speaker+gender+age, data=scores, mean)
+```
+
+
+```{r compare_female, fig.asp=1}
+dvf = da[da$speaker.gender=="F",]
+
+mvft = matrix(dvf[ order(dvf$gender, dvf$age),]$score,50,4,byrow=F, 
+      dimnames=list(1:50,c("adult_women", "young_women", "adult_men", "young_men")))
+
+print(
+  ggpairs(
+    data.frame(mvft),title="Female voices", 
+    columnLabels=c("women over 35", "women under 35", "men over 35","men under 35"),
+    lower=list(continuous=wrap("points", colour="red" )),
+    upper =list(continuous = wrap("cor", colour = "black"))
+  )+
+  theme(plot.title=element_text(size=rel(1.5)))+
+  #theme(axis.text = element_text(size=rel(1.5)))+
+  theme(axis.title=element_text(size=rel(1.5), face="bold", colour="black"))
+)
+```
+
+
+```{r compare_male, fig.asp=1}
+dvm = da[da$speaker.gender=="M",]
+
+mvmt = matrix(dvm[order(dvm$gender, dvm$age),]$score,60,4,byrow=F, 
+      dimnames=list(1:60,c("adult_women", "young_women", "adult_men", "young_men")))
+
+print(
+  ggpairs(
+    data.frame(mvmt),title="Male voices",
+    columnLabels=c("women over 35", "women under 35", "men over 35","men under 35"),
+    lower=list(continuous=wrap("points", colour="blue" )),
+    upper =list(continuous = wrap("cor", colour = "black"))
+  )+
+  theme(plot.title=element_text(size=rel(1.5)))+
+  theme(axis.title=element_text(size=rel(1.5), face="bold", colour="black"))
+)
+```
+
+
+## Plot the group average scores
+
+```{r compare_lines, fig.width=15}
+blue=brewer.pal(name="Blues",n=3)
+red=brewer.pal(name="Reds",n=3)
+
+print(
+  ggplot(dvf,aes(x=speaker,y=score,color=paste(gender,age)))+
+  geom_line(size=1.5,alpha=.3)+
+  geom_point(size=3)+
+  ylim(1,7)+
+  ggtitle("Female voices")+
+  labs(color="Groups")+
+  xlab("voice number")+
+  scale_y_continuous(breaks=c(2,3,4,5,6))+
+  annotate("text", x=40, y=1.5, 
+      label="Group average scores", size=8, 
+      family="Helvetica", fontface="bold", colour=red[3])+
+  scale_colour_manual(values=c(red[3],red[2],blue[3],blue[2]), 
+      labels=c("women over 35", "women under 35", "men over 35","men under 35"))+
+  theme(plot.title=element_text(size=rel(3), face="bold", colour="black"))+
+  theme(legend.title=element_text(size=rel(2), face="bold"))+
+  theme(legend.text=element_text(size=rel(1.5), face="bold"))+
+  theme(axis.title=element_text(size=rel(1.5), face="bold", colour="black"))
+)
+```
+
+```{r fig.width=15}
+print(
+  ggplot(dvm,aes(x=speaker,y=score,color=paste(gender,age)))+
+  geom_line(size=1.5,alpha=.3)+
+  geom_point(size=3)+
+  ylim(1,7)+
+  ggtitle("Male voices")+
+  labs(color="Groups")+
+  xlab("voice number")+
+  scale_y_continuous(breaks=c(2,3,4,5,6))+
+  annotate("text", x=50, y=1.5, 
+      label="Group average scores", size=8, 
+      family="Helvetica", fontface="bold", colour=blue[3])+
+  scale_colour_manual(values=c(red[3],red[2],blue[3],blue[2]),
+      labels=c("women over 35", "women under 35", "men over 35","men under 35"))+
+  theme(plot.title=element_text(size=rel(3), face="bold", colour="black"))+
+  theme(legend.title=element_text(size=rel(2), face="bold"))+
+  theme(legend.text=element_text(size=rel(1.5), face="bold"))+
+  theme(axis.title=element_text(size=rel(1.5), face="bold", colour="black"))
+) 
+```
+
+
+## GeMAPS oneway.test (ANOVA)
+
+Run the __oneway.test__ (Welch test) for all the GeMAPS parameters with `phonogenre` as the grouping factor. All the features are normalized.
+The test is run separately for the female and male voices.
+
+```{r anova}
+
+l = length(names(voices))
+vars = names(voices)[gemaps.start:l]
+
+oneway = function(var, data) {
+  x = oneway.test(formula(paste(var," ~ phonogenre")), data=data)
+  data.frame(
+    name=strsplit(x$data.name," ")[[1]][1], 
+    F=x$statistic, 
+    p.value=x$p.value,
+    stringsAsFactors = F)
+}
+
+```
+### Female voices
+```{r}
+
+x = voices[voices$speaker.gender=="F",]
+voices.f = cbind( x[1:(gemaps.start-1)], scale(x[gemaps.start:l])[,] )
+oneway.f = ldply(vars, oneway, data=voices.f)
+oneway.f = oneway.f[ order(oneway.f$F, decreasing = TRUE),]
+print(oneway.f)
+```
+### Male voices
+```{r}
+
+x = voices[voices$speaker.gender=="M",]
+voices.m = cbind( x[1:(gemaps.start-1)], scale(x[gemaps.start:l])[,] )
+oneway.m = ldply(vars, oneway, data=voices.m)
+oneway.m = oneway.m[ order(oneway.m$F, decreasing = TRUE),]
+print(oneway.m)
+
+```
+
+
+## GeMAPS t.test 
+Run the __one sample t.test__ for all the GeMAPS parameters to get the CI interval.
+The test is run separately for the female and male voices.
+
+```{r plot_gemaps_female/male}
+
+ttest = function(genre, data, name) {
+  tt = t.test( (data[data$phonogenre==genre,])[[name]])
+  data.frame(genre=genre,
+      t=tt$statistic, 
+      p.value=tt$p.value, 
+      mean=tt$estimate, 
+      ci.min=tt$conf.int[1], 
+      ci.max=tt$conf.int[2])
+}
+
+smdensity = function(name, data) {
+    #sm.density.compare(data[[name]], data$phonogenre, model="equal", xlab=name)
+    #legend("topright", levels(data$phonogenre), fill=2+(0:nlevels(data$phonogenre)))
+    cat("\n==== ", name, "\n")
+    print(ldply( levels(voices$phonogenre), ttest, data=data, name=name ))
+}
+```
+### Female voices
+```{r}
+l_ply(oneway.f$name, smdensity, data=voices.f)
+```
+### Male voices
+```{r}
+l_ply(oneway.m$name, smdensity, data=voices.m)
+
+```
+
